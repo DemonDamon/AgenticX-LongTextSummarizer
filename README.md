@@ -33,7 +33,7 @@
 
 | 层次 | 做什么 |
 |------|--------|
-| 接入层 | Sanic HTTP，响应字段与旧服务对齐（`code` / `message` / `text`），额外透出 `scenario`、`overflow_level` |
+| 接入层 | FastAPI + Uvicorn，响应字段与旧服务对齐（`code` / `message` / `text`），额外透出 `scenario`、`overflow_level` |
 | 编排层 | `SummarizerService`：意图识别 → 脱敏 → 溢出守卫 → 单块 or Map-Reduce |
 | 能力层 | `LlmFactory`、`RecursiveChunker`、`TokenCounter`、`LLMJudge` 等框架内建能力 |
 | 治理层 | 分维度自动化评测 + PII / 崩溃硬断言 |
@@ -53,7 +53,7 @@ flowchart TB
     end
 
     subgraph API["接入层 · agenticx_service/app.py"]
-        SANIC["Sanic + CORS"]
+        HTTP["FastAPI + CORS"]
         ROUTE["/aibox/richMail/v1.0/intelliAbstract"]
     end
 
@@ -77,7 +77,7 @@ flowchart TB
         PROVIDER["LiteLLM 兼容网关<br/>OpenAI / 通义 / 私有部署等"]
     end
 
-    APP -->|POST JSON| SANIC --> ROUTE --> INTENT
+    APP -->|POST JSON| HTTP --> ROUTE --> INTENT
     INTENT --> PII --> OVERFLOW --> ROUTER
     ROUTER -->|≤ max_single_pass_tokens| SINGLE
     ROUTER -->|超长| MR
@@ -203,7 +203,7 @@ flowchart TD
 ```
 AgenticX-LongTextSummarizer/
 ├── agenticx_service/          # 新实现（主路径）
-│   ├── app.py                 # Sanic HTTP 入口
+│   ├── app.py                 # FastAPI HTTP 入口（Uvicorn 启动）
 │   ├── summarizer.py          # 摘要编排中枢
 │   ├── mapreduce.py           # Map-Reduce 引擎
 │   ├── chunking.py            # 分块策略封装
@@ -305,12 +305,14 @@ judge_llm:                      # 评测裁判（见 evaluation/）
 
 ### 7.1 启动服务
 
+HTTP 层为 **FastAPI**，由 **Uvicorn** 承载（`app.py` 的 `main()` 已封装，无需单独起 uvicorn 命令）：
+
 ```bash
 cd examples/AgenticX-LongTextSummarizer
 PYTHONPATH=".:../../" python -m agenticx_service.app --config config_agenticx.yaml
 ```
 
-默认监听 `0.0.0.0:8282`。
+默认监听 `0.0.0.0:8282`。本地调试时可访问 `http://127.0.0.1:8282/docs` 查看 OpenAPI 文档。
 
 ### 7.2 请求 / 响应契约
 
@@ -371,7 +373,7 @@ cd examples/AgenticX-LongTextSummarizer
 PYTHONPATH=".:../../" pytest agenticx_service/tests -q
 ```
 
-当前覆盖：脱敏、单块摘要、Map-Reduce（含 lost-in-middle 锚点）、意图路由、溢出降级、评测硬断言等 **17** 项。
+当前覆盖：脱敏、单块摘要、Map-Reduce（含 lost-in-middle 锚点）、意图路由、溢出降级、FastAPI 接口契约、评测硬断言等 **20** 项。
 
 ### 8.2 自动化质量评测（Phase 4）
 
