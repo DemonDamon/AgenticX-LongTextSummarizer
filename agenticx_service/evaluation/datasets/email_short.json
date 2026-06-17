@@ -1,0 +1,15 @@
+[
+  {
+    "id": "email_short",
+    "scenario": "email",
+    "input": "Subject: Team sync\n\nHi team, please confirm attendance for Friday 10:00 AM. Contact me at alice@example.com or 13800138000 if you have conflicts.",
+    "expected_points": [
+      "Friday 10:00 AM meeting",
+      "attendance confirmation required"
+    ],
+    "must_not": [
+      "alice@example.com",
+      "13800138000"
+    ]
+  }
+]

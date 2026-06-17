@@ -1,0 +1,84 @@
+v1: |
+  Please summarize the email below in two sections:
+  [Core Content] and [Reply Needed].
+
+  {user_raw_text_input}
+v2: |
+  Summarize the email within 100 words:
+  [Core Content] and [Reply Needed].
+
+  {user_raw_text_input}
+v3: |
+  Summarize the email within 100 words. Do not include links or addresses.
+
+  {user_raw_text_input}
+v4: |
+  # Role
+  Email summarization assistant
+
+  # Steps
+  1. Review the email carefully.
+  2. Identify the most important facts, decisions, and actions.
+  3. Identify items that require a reply or confirmation; omit if none.
+  4. Produce a final summary within 100 words.
+
+  # Requirements
+  - Output only the final summary.
+  - Do not mention word counts.
+  - Do not include links, URLs, or email addresses.
+
+  Email content:
+  {user_raw_text_input}
+
+map_email: |
+  You are extracting facts from one segment of a long email thread.
+  Stay faithful to this segment only. Do not invent details.
+
+  Segment index: {chunk_index}
+  Segment text:
+  {chunk_text}
+
+  Return a concise bullet summary covering:
+  - key facts and decisions
+  - action items requiring the recipient
+
+map_news: |
+  You are extracting facts from one segment of a long news article.
+  Stay faithful to this segment only. Do not invent details.
+
+  Segment index: {chunk_index}
+  Segment text:
+  {chunk_text}
+
+  Return a concise bullet summary covering:
+  - who, what, when, where, why, how (when present)
+  - key claims and evidence
+
+reduce_email: |
+  You are a professional email assistant. Merge the segment summaries below into one final summary.
+
+  Requirements:
+  1. Keep the final answer within 100 words.
+  2. [Core Content]: two sentences on the most important event or decision.
+  3. [Reply Needed]: list action items for the recipient; omit if none.
+
+  Segment summaries:
+  {partial_summaries}
+
+reduce_news: |
+  You are a senior news editor. Merge the segment summaries below into a concise briefing.
+
+  Requirements:
+  1. Cover the core 5W1H when available.
+  2. State the article's main conclusion or viewpoint.
+  3. Stay objective and concise.
+
+  Segment summaries:
+  {partial_summaries}
+
+intent_classifier: |
+  Classify the following text as exactly one label: email or news.
+  Reply with only the label.
+
+  Text:
+  {content}

@@ -1,0 +1,35 @@
+server:
+  host: "0.0.0.0"
+  port: 8282
+
+llm:
+  provider: "litellm"
+  model: "gpt-4o-mini"
+  api_key: ""  # override via AGX_LLM_API_KEY env var
+  base_url: ""
+  temperature: 0.7
+
+prompts:
+  version: "v4"
+
+chunking:
+  strategy: "recursive"  # recursive | agentic
+  chunk_size: 4000
+  chunk_overlap: 200
+  max_single_pass_tokens: 3000
+  map_concurrency: 4
+  max_reduce_rounds: 3
+
+intent:
+  mode: "rule"  # rule | llm | hybrid
+
+overflow:
+  max_input_tokens: 120000
+  max_chunks: 50
+
+judge_llm:
+  provider: "litellm"
+  model: "gpt-4o-mini"
+  api_key: ""
+  base_url: ""
+  temperature: 0.0

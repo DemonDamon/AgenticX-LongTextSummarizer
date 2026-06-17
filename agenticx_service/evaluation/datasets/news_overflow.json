@@ -1,0 +1,13 @@
+[
+  {
+    "id": "news_overflow",
+    "scenario": "news",
+    "input": "OVERFLOW_TEST repeated sentence. ",
+    "repeat": 200,
+    "expected_points": [
+      "degraded or truncated handling without service crash"
+    ],
+    "must_not": [],
+    "require_no_crash": true
+  }
+]

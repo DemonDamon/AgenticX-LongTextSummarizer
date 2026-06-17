@@ -1,0 +1,17 @@
+[
+  {
+    "id": "email_long_chain",
+    "scenario": "email",
+    "input": "ANCHOR_START: Should we migrate the billing service this quarter?\n\nSubject: billing migration thread\nFrom: Alex\nWe need a decision on data backfill and cutover risk.\n\nRe: billing migration\nFrom: Dana\nI prefer phased rollout and staged traffic shifting.\n\n",
+    "repeat": 120,
+    "tail": "Re: Re: Re: billing migration\nFrom: Morgan\nFinal decision: proceed in Q3 with phased rollout. ANCHOR_END: Please confirm owner for the rollout checklist by Friday.",
+    "expected_points": [
+      "billing migration",
+      "phased rollout",
+      "confirm owner by Friday",
+      "ANCHOR_START",
+      "ANCHOR_END"
+    ],
+    "must_not": []
+  }
+]

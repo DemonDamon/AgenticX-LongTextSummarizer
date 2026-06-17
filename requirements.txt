@@ -23,3 +23,7 @@ uvloop==0.17.0
 websockets==10.4
 Werkzeug==2.3.7
 watchdog==5.0.2
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+# AgenticX core package: install editable from repo root, e.g.
+# pip install -e ../../

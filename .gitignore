@@ -1,0 +1,7 @@
+# Evaluation run artifacts (generated locally)
+agenticx_service/evaluation/report_*.json
+agenticx_service/evaluation/report_*.md
+
+# Python bytecode
+__pycache__/
+*.py[cod]
