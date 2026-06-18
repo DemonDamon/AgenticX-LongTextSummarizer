@@ -1,42 +1,18 @@
-"""Intent classification for email vs news routing.
+"""Intent classification adapter over domain rule engines.
 
 Author: Damon Li
 """
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
-from agenticx_service.config import IntentSettings
+from agenticx_service.config import AppConfig, IntentSettings
+from agenticx_service.domains import build_domain_registry
 from agenticx_service.llm_client import LLMClient
 from agenticx_service.prompts.registry import PromptRegistry
 
 Scenario = Literal["email", "news"]
-
-_EMAIL_HINTS = (
-    "发件人",
-    "收件人",
-    "回复",
-    "转发",
-    "re:",
-    "fw:",
-    "subject:",
-    "dear ",
-    "best regards",
-    "action item",
-)
-
-_NEWS_HINTS = (
-    "记者",
-    "报道",
-    "据悉",
-    "本报讯",
-    "新华社",
-    "Reuters",
-    "breaking",
-    "according to",
-)
 
 
 class IntentClassifier:
@@ -47,10 +23,14 @@ class IntentClassifier:
         settings: IntentSettings,
         llm_client: LLMClient | None = None,
         prompt_registry: PromptRegistry | None = None,
+        *,
+        config: AppConfig | None = None,
     ) -> None:
         self.settings = settings
         self.llm = llm_client
         self.prompts = prompt_registry or PromptRegistry()
+        app_config = config or AppConfig(intent=settings)
+        self.registry = build_domain_registry(app_config)
 
     async def classify(self, content: str) -> Scenario:
         rule_result = self._classify_by_rules(content)
@@ -67,19 +47,15 @@ class IntentClassifier:
         return label if label in ("email", "news") else "email"
 
     def _classify_by_rules(self, content: str) -> Scenario | None:
-        lowered = content.lower()
-        email_score = sum(1 for hint in _EMAIL_HINTS if hint.lower() in lowered)
-        news_score = sum(1 for hint in _NEWS_HINTS if hint.lower() in lowered)
-
-        if re.search(r"^subject:\s", lowered, flags=re.MULTILINE):
-            email_score += 2
-        if re.search(r"^【.+】", content, flags=re.MULTILINE):
-            news_score += 2
-
-        if email_score > news_score:
+        plugin = self.registry.resolve(content, explicit=None)
+        email_score = self.registry.get("email").rule_engine.score(content)
+        news_score = self.registry.get("news").rule_engine.score(content)
+        if email_score > news_score and email_score > 0:
             return "email"
-        if news_score > email_score:
+        if news_score > email_score and news_score > 0:
             return "news"
+        if plugin.name in ("email", "news") and max(email_score, news_score) > 0:
+            return plugin.name  # type: ignore[return-value]
         return None
 
     async def _classify_by_llm(self, content: str) -> str:

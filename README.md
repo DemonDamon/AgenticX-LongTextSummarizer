@@ -410,4 +410,59 @@ PYTHONPATH=".:../../" python -m agenticx_service.evaluation.run_eval
 
 ---
 
+## 10. Summarizer v2（业务无关内核 + 领域插件）
+
+v2 在保留 `intelliAbstract` 兼容契约的同时，新增通用摘要能力与可插拔架构：
+
+| 能力 | 入口 / 模块 |
+|------|-------------|
+| 通用单文档摘要 | `POST /v2/summarize` → `core/engine.py` + `domains/*` |
+| 多模态转写（进核前） | `parts[]` + `modality/*` |
+| 批处理 + 资源评估 | `POST /v2/summarize/batch`、`GET /v2/jobs/{id}` → `batch/*` |
+| 多文档集合摘要 | `POST /v2/summarize/collection` → `multidoc/*` |
+| Agent 化提示词生命周期 | `POST /v2/feedback`、`python -m agenticx_service.agentic` → `agentic/*` |
+
+### 10.1 v2 单文档 API
+
+```bash
+curl -s -X POST http://127.0.0.1:8282/v2/summarize \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Subject: Sync\nPlease confirm.","domain":"email"}'
+```
+
+响应 `data` 含 `domain`、`overflow_level`、`trace`（记录 domain/stages/modalities）。
+
+### 10.2 多模态能力矩阵
+
+| 模态 | 邮件域 | 新闻域 | 转写方式 |
+|------|:------:|:------:|----------|
+| 文本 | ✅ | ✅ | 直通 |
+| 代码 | ✅ | — | 保留围栏 + 语言标注 |
+| 图片 | ✅ | ✅ | meta.caption/ocr_text 或占位降级 |
+| 文档 | ✅ | — | liteparse（可关） |
+| 音视频 | 预留 | 预留 | 调用即明确 NotSupported |
+
+### 10.3 批处理与资源评估
+
+`ResourceEstimator` 按 token 数估算 LLM 调用次数与 RPM/TPM 需求。示例：1 万 token、`chunk_size=4000`、`max_single_pass_tokens=3000` 时约 `ceil(10000/4000)=3` 个 map 块 + reduce 轮次。
+
+`CapacityGuard` 在 `inline_max_concurrency` / provider 限额不足时将请求入队；队列满则拒绝。
+
+### 10.4 多文档集合摘要
+
+三意图：`aggregate`（综合）、`compare`（对比）、`timeline`（时间线）。流程：每篇独立摘要 → 跨文档 reduce（模板 `collection.*`），保留 `Doc N｜title` 来源标识。
+
+小集合（≤ `multidoc.sync_max_docs`）同步返回；大集合返回 `job_id` 异步处理。
+
+### 10.5 Agent 化提示词
+
+- **静态层**：`prompts/templates.yaml`（永远兜底）
+- **固化层**：`prompts/frozen/` + `FrozenPromptStore`
+- **skill 层**：`~/.agenticx/skills/summarizer/`（默认关 `agentic.skill_authoring`）
+- **个性化层**：`POST /v2/feedback` 写入偏好并追加注入
+
+启用分层解析：`agentic.layered_resolver: true` 或 `AGX_SUMMARIZER_LAYERED_RESOLVER=1`。
+
+---
+
 **Author:** Damon Li

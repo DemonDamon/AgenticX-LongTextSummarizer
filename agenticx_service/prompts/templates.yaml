@@ -1,3 +1,111 @@
+email.single: |
+  # Role
+  Email summarization assistant
+
+  # Steps
+  1. Review the email carefully.
+  2. Identify the most important facts, decisions, and actions.
+  3. Identify items that require a reply or confirmation; omit if none.
+  4. Produce a final summary within 100 words.
+
+  # Requirements
+  - Output only the final summary.
+  - Do not mention word counts.
+  - Do not include links, URLs, or email addresses.
+
+  Email content:
+  {user_raw_text_input}
+
+email.map: |
+  You are extracting facts from one segment of a long email thread.
+  Stay faithful to this segment only. Do not invent details.
+
+  Segment index: {chunk_index}
+  Segment text:
+  {chunk_text}
+
+  Return a concise bullet summary covering:
+  - key facts and decisions
+  - action items requiring the recipient
+
+email.reduce: |
+  You are a professional email assistant. Merge the segment summaries below into one final summary.
+
+  Requirements:
+  1. Keep the final answer within 100 words.
+  2. [Core Content]: two sentences on the most important event or decision.
+  3. [Reply Needed]: list action items for the recipient; omit if none.
+
+  Segment summaries:
+  {partial_summaries}
+
+news.single: |
+  You are a senior news editor. Summarize the article below in a concise briefing.
+
+  Requirements:
+  1. Cover the core 5W1H when available.
+  2. State the article's main conclusion or viewpoint.
+  3. Stay objective and concise within 120 words.
+
+  Article:
+  {user_raw_text_input}
+
+news.map: |
+  You are extracting facts from one segment of a long news article.
+  Stay faithful to this segment only. Do not invent details.
+
+  Segment index: {chunk_index}
+  Segment text:
+  {chunk_text}
+
+  Return a concise bullet summary covering:
+  - who, what, when, where, why, how (when present)
+  - key claims and evidence
+
+news.reduce: |
+  You are a senior news editor. Merge the segment summaries below into a concise briefing.
+
+  Requirements:
+  1. Cover the core 5W1H when available.
+  2. State the article's main conclusion or viewpoint.
+  3. Stay objective and concise.
+
+  Segment summaries:
+  {partial_summaries}
+
+collection.aggregate: |
+  You are synthesizing summaries from multiple documents into one cohesive briefing.
+
+  Requirements:
+  1. Identify shared themes and key conclusions across documents.
+  2. Deduplicate overlapping points.
+  3. Cite source document numbers when stating facts (e.g. "据 Doc 2").
+
+  Document summaries:
+  {partial_summaries}
+
+collection.compare: |
+  You are comparing multiple document summaries.
+
+  Requirements:
+  1. List consensus points across documents.
+  2. Highlight disagreements or unique viewpoints per document.
+  3. Cite source document numbers (e.g. "Doc 1 vs Doc 3").
+
+  Document summaries:
+  {partial_summaries}
+
+collection.timeline: |
+  You are building a chronological timeline from multiple document summaries.
+
+  Requirements:
+  1. Extract dates, times, and event sequences.
+  2. Order events chronologically.
+  3. Cite source document numbers for each event.
+
+  Document summaries:
+  {partial_summaries}
+
 v1: |
   Please summarize the email below in two sections:
   [Core Content] and [Reply Needed].

@@ -23,6 +23,34 @@ chunking:
 intent:
   mode: "rule"  # rule | llm | hybrid
 
+domains:
+  default: "email"
+
+modality:
+  liteparse_enabled: true
+  code_max_chars: 8000
+  document_max_chars: 12000
+
+batch:
+  batch_concurrency: 4
+  queue_max: 100
+  inline_max_concurrency: 2
+  provider_rpm_limit: 60
+  provider_tpm_limit: 120000
+  avg_call_seconds: 3.0
+  output_budget_tokens: 512
+  reduce_fan_in: 8
+
+multidoc:
+  sync_max_docs: 5
+  per_doc_summary_max_tokens: 800
+
+agentic:
+  layered_resolver: false
+  skill_authoring: false
+  personalization_max_chars: 400
+  frozen_dir: "prompts/frozen"
+
 overflow:
   max_input_tokens: 120000
   max_chunks: 50

@@ -20,11 +20,11 @@ from agenticx_service.tests.conftest import StubLLMProvider, make_stub_client, m
 async def test_short_text_uses_single_pass() -> None:
     config = make_test_config(chunking={"max_single_pass_tokens": 10_000})
     service = SummarizerService(config, llm_client=make_stub_client(config))
-    service.map_reduce.run = AsyncMock()  # type: ignore[method-assign]
+    service.engine._map_reduce = AsyncMock(return_value=("should not run", {"stages": []}))  # type: ignore[method-assign]
 
     await service.summarize("Short meeting reminder for Friday.")
 
-    service.map_reduce.run.assert_not_called()
+    service.engine._map_reduce.assert_not_called()
 
 
 @pytest.mark.asyncio
