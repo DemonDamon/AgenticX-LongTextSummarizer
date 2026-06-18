@@ -14,7 +14,7 @@ from agenticx.core.token_counter import count_tokens
 from agenticx_service.chunking import TextChunker
 from agenticx_service.config import AppConfig
 from agenticx_service.core.prompt_resolver import PromptResolver, StaticPromptResolver
-from agenticx_service.core.types import Modality, SummarizeRequest, SummarizeResult
+from agenticx_service.core.types import ContentPart, Modality, SummarizeRequest, SummarizeResult
 from agenticx_service.domains import build_domain_registry
 from agenticx_service.domains.base import DomainRegistry
 from agenticx_service.llm_client import LLMClient
@@ -98,22 +98,20 @@ class SummarizationEngine:
         )
 
     async def _ingest_text(self, req: SummarizeRequest) -> tuple[str, list[str]]:
-        if not req.parts:
+        parts: list[ContentPart] = list(req.parts or [])
+        if req.content:
+            parts.insert(0, ContentPart(modality=Modality.TEXT, payload=req.content))
+        if not parts:
             return req.content, ["text"]
-        if req.domain:
-            supported = self.registry.get(req.domain).supported_modalities()
-        else:
-            supported = {
-                Modality.TEXT,
-                Modality.IMAGE,
-                Modality.CODE,
-                Modality.DOCUMENT,
-            }
-        segments, modality_trace = await self.modality.assemble(req.parts, supported)
-        combined = req.content
-        if segments:
-            combined = (req.content + "\n\n" + segments).strip() if req.content else segments
-        return combined, modality_trace
+
+        sample_text = next(
+            (part.payload for part in parts if part.modality == Modality.TEXT),
+            req.content,
+        )
+        domain_plugin = self.registry.resolve(sample_text, req.domain)
+        supported = domain_plugin.supported_modalities()
+        ctx = {"llm_client": self.llm, "config": self.config}
+        return await self.modality.assemble(parts, supported, ctx)
 
     def _should_use_single_pass(self, text: str, req: SummarizeRequest) -> bool:
         tokens = count_tokens(text, model=self.config.llm.model)

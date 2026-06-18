@@ -438,28 +438,131 @@ curl -s -X POST http://127.0.0.1:8282/v2/summarize \
 |------|:------:|:------:|----------|
 | 文本 | ✅ | ✅ | 直通 |
 | 代码 | ✅ | — | 保留围栏 + 语言标注 |
-| 图片 | ✅ | ✅ | meta.caption/ocr_text 或占位降级 |
-| 文档 | ✅ | — | liteparse（可关） |
-| 音视频 | 预留 | 预留 | 调用即明确 NotSupported |
+| 图片 | ✅ | ✅ | vision caption/OCR 或 meta 注入；无 vision 时占位降级 |
+| 文档 | ✅ | — | liteparse（可关；未安装时返回安装提示） |
+| 音视频 | 预留 | 预留 | 调用即 `ModalityNotSupported` |
 
 ### 10.3 批处理与资源评估
 
-`ResourceEstimator` 按 token 数估算 LLM 调用次数与 RPM/TPM 需求。示例：1 万 token、`chunk_size=4000`、`max_single_pass_tokens=3000` 时约 `ceil(10000/4000)=3` 个 map 块 + reduce 轮次。
+#### 估算公式
 
-`CapacityGuard` 在 `inline_max_concurrency` / provider 限额不足时将请求入队；队列满则拒绝。
+设单条文本 token 数为 `T`，`S = max_single_pass_tokens`，`C = chunk_size`，reduce 扇入 `F = reduce_fan_in`：
+
+| 量 | 公式 |
+|----|------|
+| 分块数 | `n_chunks = ceil(T / C)`（仅当 `T > S`） |
+| LLM 调用数 | `T ≤ S` → `calls = 1`；否则 `calls = n_chunks + reduce_calls` |
+| reduce 轮次 | 每轮 `groups = ceil(remaining / F)`，直至 `remaining ≤ 1` 或达 `max_reduce_rounds` |
+| 预计耗时 | `est_latency_s ≈ ceil(calls / map_concurrency) × avg_call_seconds`（批级再除以 `batch_concurrency`） |
+| TPM / RPM | `required_tpm ≈ calls × (min(T,C) + output_budget_tokens) / (est_latency_s/60)` |
+
+`ResourceEstimate` 结构化返回：`n_chunks`、`calls`、`est_latency_s`、`required_tpm`、`required_rpm`、`est_mem_bytes`。
+
+#### 算例 1：单条 ~1 万 token 长文
+
+默认 `chunk_size=4000`、`max_single_pass_tokens=3000`、`reduce_fan_in=8`、`map_concurrency=4`、`avg_call_seconds=3`：
+
+- `n_chunks = ceil(10000/4000) = 3`
+- `map_calls = 3`；reduce 约 1 次 → **`calls ≈ 4`**
+- `est_latency_s ≈ ceil(4/4)×3 = 3s`
+- 若 `output_budget_tokens=512`：`required_rpm ≈ 4 / (3/60) ≈ 80`
+
+#### 算例 2：批量 10 条短邮件
+
+每条 `T=200 ≤ S`，`calls=1`；批级 `total_calls=10`，`batch_concurrency=4`：
+
+- `est_latency_s ≈ ceil(10/4)×3 = 9s`
+- 适合 inline；若 `in_flight ≥ inline_max_concurrency` 则 `CapacityGuard` 返回 `enqueue`
+
+#### 队列降级时序
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as /v2/summarize/batch
+    participant Guard as CapacityGuard
+    participant Engine as SummarizationEngine
+    participant Queue as JobQueue
+    participant Worker as SummaryWorker
+
+    Client->>API: POST items[]
+    API->>Guard: decide(estimate, in_flight, queue_size)
+    alt inline
+        Guard-->>API: inline
+        API->>Engine: summarize()
+        Engine-->>API: result
+        API-->>Client: status=done
+    else enqueue
+        Guard-->>API: enqueue
+        API->>Queue: put(job)
+        API-->>Client: status=queued, job_id
+        Worker->>Queue: dequeue()
+        Worker->>Engine: summarize()
+        Engine-->>Worker: result
+        Worker->>Queue: update(done)
+        Client->>API: GET /v2/jobs/{id}
+        API-->>Client: status=done, result
+    else reject
+        Guard-->>API: reject
+        API-->>Client: status=rejected
+    end
+```
+
+配置项见 `config_agenticx.yaml` 的 `batch:` 段（`batch_concurrency`、`queue_max`、`inline_max_concurrency`、`provider_rpm_limit`、`provider_tpm_limit`、`avg_call_seconds`、`output_budget_tokens`）。
 
 ### 10.4 多文档集合摘要
 
-三意图：`aggregate`（综合）、`compare`（对比）、`timeline`（时间线）。流程：每篇独立摘要 → 跨文档 reduce（模板 `collection.*`），保留 `Doc N｜title` 来源标识。
+#### 两阶段结构
 
-小集合（≤ `multidoc.sync_max_docs`）同步返回；大集合返回 `job_id` 异步处理。
+```mermaid
+flowchart TB
+    DOCS["N 篇文档"] --> PER["每篇独立摘要\n(SummarizationEngine + batch_concurrency)"]
+    PER --> PS["N 份 Doc N｜title 摘要"]
+    PS --> XR{集合意图}
+    XR -->|aggregate| AGG["collection.aggregate"]
+    XR -->|compare| CMP["collection.compare"]
+    XR -->|timeline| TL["collection.timeline"]
+    AGG --> OUT["CollectionResult\nsummary + per_doc + trace"]
+    CMP --> OUT
+    TL --> OUT
+```
 
-### 10.5 Agent 化提示词
+#### 三种集合意图
 
-- **静态层**：`prompts/templates.yaml`（永远兜底）
-- **固化层**：`prompts/frozen/` + `FrozenPromptStore`
+| 意图 | 语义 | 模板 |
+|------|------|------|
+| `aggregate` | 综合归纳共同主题，去重并保留来源编号 | `collection.aggregate` |
+| `compare` | 对比共识点 / 分歧点 / 各篇独有观点 | `collection.compare` |
+| `timeline` | 抽取时间点，按时间排序成演进脉络 | `collection.timeline` |
+
+每篇文档先走 Phase A 引擎（含领域路由、多模态、溢出 guard）；跨文档 reduce 输入格式为 `Doc N｜title` + 摘要正文。总量超 `max_single_pass_tokens` 时多级 cross reduce（`max_reduce_rounds` 收敛）。
+
+**API：** `POST /v2/summarize/collection` — 小集合（≤ `multidoc.sync_max_docs` 且估算可控）同步返回 `summary`/`per_doc`/`trace`；大集合返回 `202` + `job_id`，经 Phase C worker 异步完成，可 `GET /v2/jobs/{id}` 查询。
+
+### 10.5 Agent 化提示词生命周期
+
+提示词按四层叠加（`LayeredPromptResolver`，`agentic.layered_resolver: true` 启用）：
+
+```mermaid
+flowchart TB
+    BASE["1. 静态模板 templates.yaml — 永远兜底"]
+    FROZEN["2. frozen/<domain>/<stage>@<ver> — 覆盖 base"]
+    SKILL["3. skill 层 — 场景命中时覆盖"]
+    PERS["4. 个性化层 — 追加用户偏好"]
+    BASE --> FROZEN --> SKILL --> PERS --> FINAL["最终 prompt"]
+```
+
+| 阶段 | 能力 | 模块 / 入口 |
+|------|------|-------------|
+| 冷启动评测 | 多候选 × 数据集 → 排名报告 | `python -m agenticx_service.agentic` + `eval_harness.py` |
+| 固化 | 获胜模板 → `prompts/frozen/` + `manifest.yaml` | `FrozenPromptStore.freeze()` / CLI `--freeze` |
+| 个性化 | 用户反馈 → 记忆 → 追加约束段 | `POST /v2/feedback`，`/v2/summarize` 传 `user_id` |
+| 场景扩展 | Agent 起草 SKILL.md → guard 扫描 → 落盘 | `SkillAuthor`（`agentic.skill_authoring: true`） |
+
+- **静态层**：`prompts/templates.yaml`（永远兜底；`layered_resolver=false` 时仅本层，A–D 行为不变）
+- **固化层**：`prompts/frozen/` + `FrozenPromptStore`（版本只增，manifest 切换生效版本）
 - **skill 层**：`~/.agenticx/skills/summarizer/`（默认关 `agentic.skill_authoring`）
-- **个性化层**：`POST /v2/feedback` 写入偏好并追加注入
+- **个性化层**：`POST /v2/feedback` 写入偏好，仅**追加**「在不违反上述核心摘要要求的前提下…」约束块
 
 启用分层解析：`agentic.layered_resolver: true` 或 `AGX_SUMMARIZER_LAYERED_RESOLVER=1`。
 

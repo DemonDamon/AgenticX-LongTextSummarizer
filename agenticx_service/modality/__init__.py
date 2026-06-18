@@ -3,6 +3,11 @@
 Author: Damon Li
 """
 
-from agenticx_service.modality.base import CapabilityMatrix, ModalityPipeline, TextRepr
+from agenticx_service.modality.base import (
+    CapabilityMatrix,
+    ModalityNotSupported,
+    ModalityPipeline,
+    TextRepr,
+)
 
 __all__ = ["CapabilityMatrix", "ModalityPipeline", "TextRepr"]

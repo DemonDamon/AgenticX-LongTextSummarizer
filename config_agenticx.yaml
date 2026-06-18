@@ -30,6 +30,7 @@ modality:
   liteparse_enabled: true
   code_max_chars: 8000
   document_max_chars: 12000
+  max_images: 5
 
 batch:
   batch_concurrency: 4

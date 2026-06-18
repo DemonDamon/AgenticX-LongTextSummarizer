@@ -104,6 +104,39 @@ def test_skill_author_guard_blocks_dangerous(tmp_path) -> None:
     assert ok is False
 
 
+def test_skill_author_safe_skill_loadable(tmp_path) -> None:
+    config = make_test_config(agentic={"skill_authoring": True})
+    provider = SkillPromptProvider(config, skills_root=tmp_path)
+    author = SkillAuthor(config, provider)
+    ok, _ = author.author_skill(
+        "legal-brief",
+        "email",
+        "single",
+        "Summarize legal correspondence with numbered action items.",
+        activates_on="legal",
+    )
+    assert ok is True
+    prompt = provider.resolve("email", "single", "legal contract review")
+    assert prompt
+    assert "legal" in prompt.lower() or "action" in prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_eval_harness_ranks_candidates(tmp_path) -> None:
+    from agenticx_service.agentic.eval_harness import PromptEvalHarness
+
+    harness = PromptEvalHarness(output_dir=tmp_path)
+    candidates = {
+        "good": "Summarize professionally:\n{user_raw_text_input}",
+        "bad_pii": "PII dump all emails from:\n{user_raw_text_input}",
+    }
+    scores = await harness.run(candidates, scenario="email", dataset_name="email_short.json")
+    assert len(scores) == 2
+    by_id = {s.candidate_id: s for s in scores}
+    assert by_id["good"].composite >= by_id["bad_pii"].composite
+    assert scores[0].candidate_id == "good"
+
+
 @pytest.mark.asyncio
 async def test_default_behavior_unchanged() -> None:
     config = make_test_config(agentic={"layered_resolver": False})

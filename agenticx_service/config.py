@@ -57,6 +57,7 @@ class ModalitySettings:
     code_max_chars: int = 8000
     document_max_chars: int = 12000
     image_max_bytes: int = 5_000_000
+    max_images: int = 5
 
 
 @dataclass
