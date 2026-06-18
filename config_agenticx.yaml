@@ -44,6 +44,7 @@ batch:
 
 multidoc:
   sync_max_docs: 5
+  sync_max_calls: 20
   per_doc_summary_max_tokens: 800
 
 agentic:

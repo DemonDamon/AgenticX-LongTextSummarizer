@@ -80,6 +80,26 @@ class FeedbackBody(BaseModel):
     instruction: str
 
 
+class EstimateItem(BaseModel):
+    content: str
+    domain: str | None = None
+
+
+class EstimateBody(BaseModel):
+    items: list[EstimateItem] = Field(..., min_length=1)
+
+
+def _estimate_payload(estimate) -> dict[str, Any]:
+    return {
+        "n_chunks": estimate.n_chunks,
+        "calls": estimate.calls,
+        "est_latency_s": estimate.est_latency_s,
+        "required_rpm": estimate.required_rpm,
+        "required_tpm": estimate.required_tpm,
+        "est_mem_bytes": estimate.est_mem_bytes,
+    }
+
+
 def _parts_from_models(parts: list[PartModel] | None) -> list[ContentPart] | None:
     if not parts:
         return None
@@ -339,7 +359,10 @@ def create_app(
             count_tokens(d.content, model=app_config.llm.model) for d in docs
         ]
         estimate = estimator.estimate_batch(per_doc_tokens)
-        large = len(docs) > app_config.multidoc.sync_max_docs or estimate.calls > 20
+        large = (
+            len(docs) > app_config.multidoc.sync_max_docs
+            or estimate.calls > app_config.multidoc.sync_max_calls
+        )
         if large:
             job = job_queue.create_job(
                 "collection",
@@ -382,6 +405,30 @@ def create_app(
         return JSONResponse(
             status_code=200,
             content={"code": 0, "message": "recorded", "data": {}},
+        )
+
+    @app.post("/v2/estimate")
+    async def v2_estimate(body: EstimateBody) -> JSONResponse:
+        token_counts = [
+            count_tokens(item.content, model=app_config.llm.model) for item in body.items
+        ]
+        per_item = []
+        for tokens in token_counts:
+            single = estimator.estimate_single(tokens)
+            per_item.append({"tokens": tokens, **_estimate_payload(single)})
+        batch = estimator.estimate_batch(token_counts)
+        decision = capacity.decide(batch, worker.in_flight, job_queue.size)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 0,
+                "message": "",
+                "data": {
+                    "per_item": per_item,
+                    "batch": _estimate_payload(batch),
+                    "decision": decision,
+                },
+            },
         )
 
     return app

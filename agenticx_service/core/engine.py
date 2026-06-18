@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from agenticx.core.token_counter import count_tokens
@@ -17,13 +18,19 @@ from agenticx_service.core.prompt_resolver import PromptResolver, StaticPromptRe
 from agenticx_service.core.types import ContentPart, Modality, SummarizeRequest, SummarizeResult
 from agenticx_service.domains import build_domain_registry
 from agenticx_service.domains.base import DomainRegistry
-from agenticx_service.llm_client import LLMClient
+from agenticx_service.llm_client import LLMClient, PromptInput
 from agenticx_service.modality.base import ModalityPipeline
 from agenticx_service.overflow import OverflowGuard
 from agenticx_service.prompts.registry import PromptRegistry
 from agenticx_service.tools.desensitize import mask_pii
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _CallCost:
+    llm_calls: int = 0
+    estimated_prompt_tokens: int = 0
 
 
 class SummarizationEngine:
@@ -48,8 +55,15 @@ class SummarizationEngine:
         self.chunker = TextChunker(config.chunking)
         self.modality = modality_pipeline or ModalityPipeline(config)
 
+    async def _call_llm(self, prompt: PromptInput, cost: _CallCost) -> str:
+        if isinstance(prompt, str):
+            cost.estimated_prompt_tokens += count_tokens(prompt, model=self.config.llm.model)
+        cost.llm_calls += 1
+        return await self.llm.complete(prompt)
+
     async def summarize(self, req: SummarizeRequest) -> SummarizeResult:
         trace: dict[str, Any] = {"stages": [], "modalities": []}
+        cost = _CallCost()
         working_text, modality_trace = await self._ingest_text(req)
         trace["modalities"] = modality_trace
 
@@ -72,11 +86,12 @@ class SummarizationEngine:
             if self._should_use_single_pass(working):
                 trace["stages"].append("single")
                 prompt = await self.resolver.resolve(domain_plugin.name, "single", dict(ctx_base))
-                summary = await self.llm.complete(prompt)
+                summary = await self._call_llm(prompt, cost)
             else:
-                summary, mr_trace = await self._map_reduce(working, domain_plugin.name, ctx_base)
+                summary, mr_trace = await self._map_reduce(working, domain_plugin.name, ctx_base, cost)
                 trace["stages"].extend(mr_trace.get("stages", []))
                 trace["chunk_count"] = mr_trace.get("chunk_count", 0)
+                trace["reduce_rounds"] = mr_trace.get("reduce_rounds", 0)
         except Exception:  # noqa: BLE001
             logger.exception("Summarization failed")
             summary = self.overflow.failure_message()
@@ -89,6 +104,11 @@ class SummarizationEngine:
 
         if "_prompt_layers" in ctx_base:
             trace["prompt_layers"] = ctx_base["_prompt_layers"]
+
+        trace["cost"] = {
+            "llm_calls": cost.llm_calls,
+            "estimated_prompt_tokens": cost.estimated_prompt_tokens,
+        }
 
         return SummarizeResult(
             text=final_text,
@@ -122,6 +142,7 @@ class SummarizationEngine:
         content: str,
         domain_name: str,
         ctx_base: dict[str, Any],
+        cost: _CallCost,
     ) -> tuple[str, dict[str, Any]]:
         trace: dict[str, Any] = {"stages": ["map"]}
         chunks = await self.chunker.split(content)
@@ -142,12 +163,46 @@ class SummarizationEngine:
             async with semaphore:
                 ctx = {**ctx_base, "chunk_index": index + 1, "chunk_text": chunk_text}
                 prompt = await self.resolver.resolve(domain_name, "map", ctx)
-                return await self.llm.complete(prompt)
+                return await self._call_llm(prompt, cost)
 
         partials = list(await asyncio.gather(*[map_chunk(i, c) for i, c in enumerate(chunks)]))
         trace["stages"].append("reduce")
-        final = await self._reduce_partials(partials, domain_name, ctx_base, depth=0)
+        final, reduce_rounds = await self._reduce_partials(partials, domain_name, ctx_base, 0, cost)
+        trace["reduce_rounds"] = reduce_rounds
         return final, trace
+
+    def _format_partials(self, partials: list[str]) -> str:
+        return "\n\n".join(
+            f"Segment {index + 1}:\n{summary}" for index, summary in enumerate(partials)
+        )
+
+    async def _reduce_group(
+        self,
+        partials: list[str],
+        domain_name: str,
+        ctx_base: dict[str, Any],
+        depth: int,
+        cost: _CallCost,
+    ) -> str:
+        numbered = self._format_partials(partials)
+        token_count = count_tokens(numbered, model=self.config.llm.model)
+        threshold = self.config.chunking.max_single_pass_tokens
+        max_rounds = self.config.chunking.max_reduce_rounds
+
+        if token_count <= threshold or len(partials) <= 1:
+            ctx = {**ctx_base, "partial_summaries": numbered}
+            prompt = await self.resolver.resolve(domain_name, "reduce", ctx)
+            return await self._call_llm(prompt, cost)
+
+        if len(partials) > 1 and depth < max_rounds:
+            midpoint = max(1, len(partials) // 2)
+            left = await self._reduce_group(partials[:midpoint], domain_name, ctx_base, depth + 1, cost)
+            right = await self._reduce_group(partials[midpoint:], domain_name, ctx_base, depth + 1, cost)
+            return await self._reduce_group([left, right], domain_name, ctx_base, depth + 1, cost)
+
+        ctx = {**ctx_base, "partial_summaries": numbered}
+        prompt = await self.resolver.resolve(domain_name, "reduce", ctx)
+        return await self._call_llm(prompt, cost)
 
     async def _reduce_partials(
         self,
@@ -155,22 +210,35 @@ class SummarizationEngine:
         domain_name: str,
         ctx_base: dict[str, Any],
         depth: int,
-    ) -> str:
-        numbered = "\n\n".join(
-            f"Segment {index + 1}:\n{summary}" for index, summary in enumerate(partials)
+        cost: _CallCost,
+    ) -> tuple[str, int]:
+        if not partials:
+            raise ValueError("Reduce received no partial summaries")
+
+        rounds = depth + 1
+
+        if len(partials) == 1:
+            result = await self._reduce_group(partials, domain_name, ctx_base, depth, cost)
+            return result, rounds
+
+        if depth >= self.config.chunking.max_reduce_rounds:
+            result = await self._reduce_group(partials, domain_name, ctx_base, depth, cost)
+            return result, rounds
+
+        fan_in = self.config.batch.reduce_fan_in
+        groups = [partials[i : i + fan_in] for i in range(0, len(partials), fan_in)]
+        semaphore = asyncio.Semaphore(self.config.chunking.map_concurrency)
+
+        async def reduce_one(group: list[str]) -> str:
+            async with semaphore:
+                return await self._reduce_group(group, domain_name, ctx_base, depth, cost)
+
+        group_results = list(await asyncio.gather(*[reduce_one(g) for g in groups]))
+
+        if len(group_results) == 1:
+            return group_results[0], rounds
+
+        final, child_rounds = await self._reduce_partials(
+            group_results, domain_name, ctx_base, depth + 1, cost
         )
-        ctx = {**ctx_base, "partial_summaries": numbered}
-        prompt = await self.resolver.resolve(domain_name, "reduce", ctx)
-
-        token_count = count_tokens(numbered, model=self.config.llm.model)
-        if (
-            token_count > self.config.chunking.max_single_pass_tokens
-            and len(partials) > 1
-            and depth < self.config.chunking.max_reduce_rounds
-        ):
-            midpoint = max(1, len(partials) // 2)
-            left = await self._reduce_partials(partials[:midpoint], domain_name, ctx_base, depth + 1)
-            right = await self._reduce_partials(partials[midpoint:], domain_name, ctx_base, depth + 1)
-            return await self._reduce_partials([left, right], domain_name, ctx_base, depth + 1)
-
-        return await self.llm.complete(prompt)
+        return final, max(rounds, child_rounds)

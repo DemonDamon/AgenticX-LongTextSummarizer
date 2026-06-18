@@ -75,6 +75,7 @@ class BatchSettings:
 @dataclass
 class MultidocSettings:
     sync_max_docs: int = 5
+    sync_max_calls: int = 20
     per_doc_summary_max_tokens: int = 800
 
 

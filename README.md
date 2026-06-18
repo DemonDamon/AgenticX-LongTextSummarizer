@@ -181,22 +181,26 @@ sequenceDiagram
     E-->>C: SummarizeResult(text, domain, overflow_level, trace)
 ```
 
-`trace` 字段对调用方透明暴露执行细节：`domain` / `domain_score` / `stages` / `chunk_count` / `modalities` / `prompt_layers`，便于排障与监控。
+`trace` 字段对调用方透明暴露执行细节：`domain` / `domain_score` / `stages` / `chunk_count` / `reduce_rounds` / `modalities` / `prompt_layers` / `cost`（`llm_calls` + `estimated_prompt_tokens`），便于排障、监控与成本分析。
 
-### 3.2 Map-Reduce 与多级 reduce
+### 3.2 Map-Reduce 与 fan_in 分组 reduce
 
-超过 `max_single_pass_tokens` 时走 Map-Reduce；reduce 阶段在合并后 token 仍超阈值时**二分递归**，直到收敛或达 `max_reduce_rounds`：
+超过 `max_single_pass_tokens` 时走 Map-Reduce。Reduce 阶段优先按 `batch.reduce_fan_in`（默认 8）分组并行合并，**仅当单组拼接仍超阈值**时才在该组内二分兜底，算法与 `ResourceEstimator._reduce_calls` 同口径：
 
 ```mermaid
 flowchart TD
     IN([working_text]) --> SPLIT["RecursiveChunker.split<br/>截断到 ≤ max_chunks"]
     SPLIT --> MAP["Map：Semaphore(map_concurrency) 并行<br/>每块 → resolve(domain, 'map') → LLM"]
-    MAP --> NUM["编号拼接 Segment 1..N"]
-    NUM --> CHECK{"拼接后 token<br/>> 阈值 且 块数>1 且<br/>depth < max_reduce_rounds?"}
-    CHECK -->|是| BISECT["二分 → 左/右各递归 reduce<br/>→ 再 reduce 合并"]
-    CHECK -->|否| RED["resolve(domain, 'reduce') → LLM"]
-    BISECT --> RED
-    RED --> OUT([summary])
+    MAP --> PART["N 份 partial summaries"]
+    PART --> CHK{"N ≤ fan_in 且<br/>拼接 ≤ 阈值?"}
+    CHK -->|是| ONE["1 次 reduce LLM"]
+    CHK -->|否| GRP["按 fan_in 切组<br/>groups = ceil(N / fan_in)"]
+    GRP --> EACH["各组并行 _reduce_group"]
+    EACH --> RECUR["组结果递归 reduce<br/>depth+1, ≤ max_reduce_rounds"]
+    RECUR --> ONE
+    CHK -->|单组超阈值| BISECT["仅该组内二分兜底"]
+    BISECT --> RECUR
+    ONE --> OUT([summary])
 ```
 
 ### 3.3 多模态进核（capability matrix + 降级 trace）
@@ -239,6 +243,8 @@ flowchart TD
 | reduce 轮次 | 每轮 `groups = ceil(remaining / F)`，直至 `remaining ≤ 1` 或达 `max_reduce_rounds` |
 | 预计耗时 | 单条 `ceil(calls / map_concurrency) × avg_call_seconds`；批级 `ceil(total_calls / batch_concurrency) × avg_call_seconds` |
 | RPM / TPM | `required_rpm ≈ calls / (est_latency_s/60)`；`required_tpm ≈ calls × (min(T,C)+output_budget_tokens) / (est_latency_s/60)` |
+
+> ⚠️ Engine 的 reduce 实现已对齐上表（`fan_in` 分组优先，单组超阈值才二分）；`ResourceEstimator` 估算与实际 `trace.cost.llm_calls` 口径一致。
 
 `CapacityGuard.decide` 判定顺序：`in_flight ≥ inline_max_concurrency` → 或 `required_rpm > provider_rpm_limit` → 或 `required_tpm > provider_tpm_limit`，命中任一则尝试入队；队列已满（`queue_size ≥ queue_max`）则 reject。
 
@@ -301,7 +307,7 @@ flowchart TB
 | `compare` | 对比共识点 / 分歧点 / 各篇独有观点 | `collection.compare` |
 | `timeline` | 抽取时间点，按时间排序成演进脉络 | `collection.timeline` |
 
-**API：** `POST /v2/summarize/collection` — 小集合（`len(docs) ≤ multidoc.sync_max_docs` 且估算 `calls ≤ 20`）同步返回；大集合返回 `202` + `job_id`，经 Phase C worker 异步完成，`GET /v2/jobs/{id}` 查询。
+**API：** `POST /v2/summarize/collection` — 小集合（`len(docs) ≤ multidoc.sync_max_docs` 且估算 `calls ≤ multidoc.sync_max_calls`）同步返回；大集合返回 `202` + `job_id`，经 Phase C worker 异步完成，`GET /v2/jobs/{id}` 查询。
 
 ### 3.6 Agent 化提示词四层生命周期
 
@@ -339,6 +345,40 @@ flowchart TB
 ### 3.8 intelliAbstract 兼容契约
 
 v1 入口是内核之上的薄 façade：固定以 `SummarizeRequest(content=email_content)` 调用同一内核，响应字段对齐旧服务（`code` / `message` / `text` + `data.scenario` / `data.overflow_level`），存量调用方零改造。
+
+### 3.9 成本与调用次数控制
+
+#### 各场景 LLM 调用次数
+
+| 场景 | 典型调用次数 | 说明 |
+|------|-------------|------|
+| 短文本单文档 | **1** | `T ≤ max_single_pass_tokens` 时单块 `single` |
+| 长文本 Map-Reduce | **n_chunks + reduce_calls** | map 每块 1 次；reduce 按 `fan_in` 分组（见 §3.2） |
+| 多文档 collection | **N 篇 × 引擎调用 + 跨文档 reduce** | 仅需逐篇要点时用 batch 更省 |
+| 批处理 batch | 上述逻辑 × 条数 | 无额外「再摘要一层」 |
+| 图片模态 | **+0~1** | 有 vision 且需 caption 时 +1；否则占位降级 |
+| 意图识别 | **0**（默认） | `intent.mode: rule`，规则打分 |
+
+#### 六条降本配置
+
+| 配置项 | 作用 | 权衡 |
+|--------|------|------|
+| 提高 `max_single_pass_tokens` | 更多请求走 1 次调用 | 单次 prompt 更长，依赖模型窗口 |
+| 增大 `chunk_size` / 降低 `max_chunks` | 减少 map 块数 | 块过大可能丢细节 |
+| 调大 `reduce_fan_in` | 减少 reduce 轮次 | 单组上下文更大 |
+| 压低 `per_doc_summary_max_tokens` | 降低 collection 跨文档 prompt 体积 | 单篇摘要更短 |
+| `CapacityGuard` + `/v2/estimate` | 接入前报价 / 限流 / 入队 | 需调用方配合 |
+| 保持 `intent.mode: rule`、关闭 `layered_resolver` | 零额外 LLM 开销 | 无 LLM 意图 / 四层提示词 |
+
+#### 调用前估算（不调 LLM）
+
+```bash
+curl -s -X POST http://127.0.0.1:8282/v2/estimate \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"content":"..."},{"content":"..."}]}'
+```
+
+响应含 `per_item[].calls`、`batch.calls`、`decision`（`inline` / `enqueue` / `reject`）。执行后可在 `trace.cost` 对比实际 `llm_calls` 与估算是否一致。
 
 ---
 
@@ -449,6 +489,7 @@ batch:
 
 multidoc:
   sync_max_docs: 5              # 超过此数走异步 job
+  sync_max_calls: 20            # 估算 calls 超过此阈值走异步
   per_doc_summary_max_tokens: 800
 
 agentic:
@@ -537,6 +578,16 @@ Content-Type: application/json
 
 缺 `sid` / `email_content` 返回 `400` + `code:1`；内部异常返回 `500` + `code:1`。手机号、邮箱等 PII 在进模型前由 `mask_pii` 替换，摘要中不应出现原文。
 
+### 7.5 调用前估算（零 LLM 成本）
+
+```bash
+curl -s -X POST http://127.0.0.1:8282/v2/estimate \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"content":"Subject: Sync\nPlease confirm."}]}'
+```
+
+返回 `data.per_item[].calls`、`data.batch`、`data.decision`，用于接入前报价或决定是否拆分/入队。详见 §3.9。
+
 ---
 
 ## 8. 测试与质量评估
@@ -548,7 +599,7 @@ cd examples/AgenticX-LongTextSummarizer
 PYTHONPATH=".:../../" pytest agenticx_service/tests -q
 ```
 
-覆盖：脱敏、单块摘要、Map-Reduce（含 lost-in-middle 锚点）、意图路由、溢出降级、多模态 skip/降级、批处理容量决策、jobs 端点、多文档跨域 reduce、提示词评测排名 / skill 落盘、FastAPI 接口契约、评测硬断言等，共 **56** 项。
+覆盖：脱敏、单块摘要、Map-Reduce（含 fan_in reduce 与 lost-in-middle 锚点）、意图路由、溢出降级、多模态 skip/降级、批处理容量决策、jobs 端点、`/v2/estimate`、多文档跨域 reduce、成本 trace、提示词评测排名 / skill 落盘、FastAPI 接口契约、评测硬断言等，共 **61** 项。
 
 ### 8.2 自动化质量评测（Phase 4）
 

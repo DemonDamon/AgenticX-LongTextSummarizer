@@ -89,7 +89,10 @@ async def test_timeline_intent_orders_events(monkeypatch: pytest.MonkeyPatch) ->
 @pytest.mark.asyncio
 async def test_large_collection_multi_level_reduce() -> None:
     long_summary = "event " * 800
-    config = make_test_config(chunking={"max_single_pass_tokens": 30, "max_reduce_rounds": 5})
+    config = make_test_config(
+        chunking={"max_single_pass_tokens": 30, "max_reduce_rounds": 5},
+        batch={"reduce_fan_in": 2},
+    )
     engine = build_engine(config, llm_client=make_stub_client(config, content=long_summary))
     summarizer = CollectionSummarizer(config, engine)
     request = CollectionRequest(
