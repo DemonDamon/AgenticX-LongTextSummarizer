@@ -13,6 +13,8 @@
 | Phase 2 Map-Reduce | `2026-06-17-longtext-summarizer-phase2-mapreduce.plan.md` |
 | Phase 3 路由与溢出 | `2026-06-17-longtext-summarizer-phase3-routing-overflow.plan.md` |
 | Phase 4 质量评估 | `2026-06-17-longtext-summarizer-phase4-evaluation.plan.md` |
+| v2 总览 | `2026-06-18-summarizer-v2-overview.plan.md` |
+| 经济性 / 成本可观测 | `2026-06-18-summarizer-cost-efficiency.plan.md` |
 
 关联设计文档：`../docs/agenticx_optimization_plan.md`
 
