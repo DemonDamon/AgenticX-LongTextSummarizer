@@ -110,7 +110,7 @@ class ModalityPipeline:
             adapter = self._adapter_for(part)
             repr_ = await adapter.to_text(part, ctx)
             trace.append(part.modality.value)
-            if repr_.note in {"vision-unavailable", "image-placeholder"}:
+            if repr_.note == "vision-unavailable":
                 trace.append("degraded:image")
             label = repr_.note or part.modality.value
             blocks.append(f"[{label}]\n{repr_.text}")

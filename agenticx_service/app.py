@@ -25,7 +25,6 @@ from agenticx_service.batch.worker import SummaryWorker
 from agenticx_service.config import AppConfig, default_config_path, load_config
 from agenticx_service.core.engine import SummarizationEngine
 from agenticx_service.core.types import ContentPart, Modality, SummarizeRequest
-from agenticx_service.factory import build_engine
 from agenticx_service.multidoc.collection import CollectionSummarizer
 from agenticx_service.multidoc.types import CollectionIntent, CollectionRequest, DocInput
 from agenticx_service.summarizer import SummarizerService
@@ -254,6 +253,7 @@ def create_app(
                 await job_queue.enqueue(job)
                 responses.append({"status": "queued", "job_id": job.job_id})
                 continue
+            worker.in_flight += 1
             try:
                 result = await summarization_engine.summarize(
                     SummarizeRequest(
@@ -275,6 +275,8 @@ def create_app(
                 )
             except Exception as exc:  # noqa: BLE001
                 responses.append({"status": "failed", "error": str(exc)})
+            finally:
+                worker.in_flight -= 1
         return JSONResponse(
             status_code=200,
             content={
@@ -333,10 +335,10 @@ def create_app(
             intent=CollectionIntent(body.intent),
             options=body.options,
         )
-        total_tokens = sum(
+        per_doc_tokens = [
             count_tokens(d.content, model=app_config.llm.model) for d in docs
-        )
-        estimate = estimator.estimate_batch([total_tokens // max(len(docs), 1)] * len(docs))
+        ]
+        estimate = estimator.estimate_batch(per_doc_tokens)
         large = len(docs) > app_config.multidoc.sync_max_docs or estimate.calls > 20
         if large:
             job = job_queue.create_job(

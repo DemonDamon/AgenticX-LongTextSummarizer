@@ -12,8 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agenticx.evaluation.llm_judge import MockLLMProvider
-
 from agenticx_service.evaluation.judges import evaluate_dimensions
 from agenticx_service.tools.desensitize import mask_pii
 
@@ -42,8 +40,6 @@ class PromptEvalHarness:
         dataset_name: str = "email_short.json",
     ) -> list[CandidateScore]:
         use_mock = os.environ.get("AGX_EVAL_USE_MOCK_JUDGE", "1").lower() not in {"0", "false", "no"}
-        if use_mock:
-            MockLLMProvider()
 
         dataset_path = self.datasets_dir / dataset_name
         items: list[dict[str, Any]] = []

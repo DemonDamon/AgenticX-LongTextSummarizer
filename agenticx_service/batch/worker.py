@@ -39,6 +39,7 @@ class SummaryWorker:
         self.collection = collection or CollectionSummarizer(config, engine)
         self._semaphore = asyncio.Semaphore(config.batch.batch_concurrency)
         self._task: asyncio.Task[None] | None = None
+        self._inflight_tasks: set[asyncio.Task[None]] = set()
         self.in_flight = 0
 
     async def start(self) -> None:
@@ -57,7 +58,9 @@ class SummaryWorker:
     async def _run(self) -> None:
         while True:
             job = await self.queue.dequeue()
-            asyncio.create_task(self._process(job))
+            task = asyncio.create_task(self._process(job))
+            self._inflight_tasks.add(task)
+            task.add_done_callback(self._inflight_tasks.discard)
 
     async def _process(self, job: Job) -> None:
         async with self._semaphore:

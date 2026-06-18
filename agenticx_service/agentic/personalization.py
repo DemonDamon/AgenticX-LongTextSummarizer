@@ -5,6 +5,7 @@ Author: Damon Li
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,8 @@ class PersonalizationStore:
         if instruction not in prefs:
             prefs.append(instruction)
         path = self._path(user_id, domain)
-        path.write_text(json.dumps(prefs, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(prefs, ensure_ascii=False, indent=2)
+        await asyncio.to_thread(path.write_text, payload, encoding="utf-8")
         await self._index_workspace(path)
 
     async def _index_workspace(self, path: Path) -> None:

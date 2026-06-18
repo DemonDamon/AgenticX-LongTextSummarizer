@@ -67,8 +67,9 @@ class SummarizationEngine:
             "scenario_hint": req.options.get("scenario_hint", ""),
         }
 
+        failed = False
         try:
-            if self._should_use_single_pass(working, req):
+            if self._should_use_single_pass(working):
                 trace["stages"].append("single")
                 prompt = await self.resolver.resolve(domain_plugin.name, "single", dict(ctx_base))
                 summary = await self.llm.complete(prompt)
@@ -79,10 +80,9 @@ class SummarizationEngine:
         except Exception:  # noqa: BLE001
             logger.exception("Summarization failed")
             summary = self.overflow.failure_message()
+            failed = True
 
-        overflow_level = guard.level
-        if summary == self.overflow.failure_message():
-            overflow_level = 4
+        overflow_level = 4 if failed else guard.level
 
         processed = domain_plugin.postprocess(summary, ctx_base)
         final_text = self.overflow.wrap_result(processed, guard)
@@ -113,14 +113,9 @@ class SummarizationEngine:
         ctx = {"llm_client": self.llm, "config": self.config}
         return await self.modality.assemble(parts, supported, ctx)
 
-    def _should_use_single_pass(self, text: str, req: SummarizeRequest) -> bool:
+    def _should_use_single_pass(self, text: str) -> bool:
         tokens = count_tokens(text, model=self.config.llm.model)
-        if tokens > self.config.chunking.max_single_pass_tokens:
-            return False
-        legacy_version = req.options.get("prompt_version")
-        if legacy_version in {"v1", "v2", "v3", "v4"}:
-            return True
-        return True
+        return tokens <= self.config.chunking.max_single_pass_tokens
 
     async def _map_reduce(
         self,
