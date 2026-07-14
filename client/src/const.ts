@@ -15,6 +15,19 @@ export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 export const startLogin = () => {
   const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
   const appId = import.meta.env.VITE_APP_ID;
+
+  // Guard: in local dev without OAuth env vars, show a helpful message
+  if (!oauthPortalUrl || !appId) {
+    alert(
+      '[本地开发模式] OAuth 登录未配置。\n\n' +
+      '请在项目根目录创建 .env.local 文件并填写：\n' +
+      'VITE_OAUTH_PORTAL_URL=<your-oauth-portal-url>\n' +
+      'VITE_APP_ID=<your-app-id>\n\n' +
+      '或直接访问线上部署版本使用登录功能。'
+    );
+    return;
+  }
+
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
 
   const nonce = crypto.randomUUID();
