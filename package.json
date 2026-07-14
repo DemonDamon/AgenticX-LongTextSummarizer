@@ -112,5 +112,9 @@
     "overrides": {
       "tailwindcss>nanoid": "3.3.7"
     }
+  },
+  "imports": {
+    "@shared/*": "./shared/*.ts",
+    "@/*": "./client/src/*.ts"
   }
 }
