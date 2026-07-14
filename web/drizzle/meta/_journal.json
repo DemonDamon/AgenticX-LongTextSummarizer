@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1784014164015,
+      "tag": "0000_spotty_the_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1784014309608,
+      "tag": "0001_worthless_psylocke",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1784017353576,
+      "tag": "0002_flowery_killraven",
+      "breakpoints": true
+    }
+  ]
+}

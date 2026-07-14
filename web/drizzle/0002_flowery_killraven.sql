@@ -1,0 +1,1 @@
+ALTER TABLE `summary_history` ADD `durationMs` int DEFAULT 0;
