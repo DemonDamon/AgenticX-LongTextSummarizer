@@ -25,7 +25,7 @@
 
 系统由五个层次组成：输入规范化层、模态适配层、领域插件分发层、摘要引擎核心层，以及带持久化的输出层。个性化记忆模块（Personalization Store）作为横切关注点，在运行时将用户偏好上下文注入 Prompt。
 
-![系统架构图](docs/images/architecture.png)
+![系统架构图](docs/images/architecture_zh.png)
 
 **摘要引擎核心**负责 Token 预算估算、溢出检测、语义分块与 Map-Reduce 流水线。**多文档处理流水线**并行执行各文档的独立摘要，再通过意图驱动的跨文档综合分析生成最终结论。两条流水线汇聚于同一输出层，记录 Trace 元数据并持久化至历史数据库。
 
@@ -35,7 +35,7 @@
 
 对于短文本（估算 Token 数低于阈值），引擎直接发起单次 LLM 调用。对于长文本，引擎调用 `AgenticChunker` 进行语义边界检测，随后经过三级溢出保护，再进入并行 Map 阶段。
 
-![Map-Reduce 处理流程](docs/images/map_reduce_flow.png)
+![Map-Reduce 处理流程](docs/images/map_reduce_flow_zh.png)
 
 三级溢出保护的工作机制如下：**L1** 截断输入至安全长度，同时保留开头上下文；**L2** 在 Map 阶段开始前对每个分块单独压缩；**L3** 为紧急模式，仅保留显著性最高的句子。Map 阶段收集所有局部摘要后，系统检查其合并长度是否超过 Reduce 阈值，若超出则递归执行 Map-Reduce，直至聚合操作可安全执行。领域插件后处理与个性化注入作为最终步骤在输出前应用。
 
@@ -45,7 +45,7 @@
 
 聚合流水线支持同时输入一至十篇文档。每篇文档并行经过完整的单篇 Map-Reduce 流水线处理。所有单篇摘要收集完毕后，系统根据所选意图路由至三种跨文档综合分析策略之一。
 
-![多文档聚合处理流程](docs/images/multidoc_flow.png)
+![多文档聚合处理流程](docs/images/multidoc_flow_zh.png)
 
 三种意图模式的定义如下。
 
