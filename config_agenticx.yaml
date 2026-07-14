@@ -4,24 +4,24 @@ server:
 
 llm:
   provider: "litellm"
-  model: "gpt-4o-mini"
-  api_key: ""  # override via AGX_LLM_API_KEY env var
-  base_url: ""
+  model: "gpt-5-mini"
+  api_key: ""          # 由 AGX_LLM_API_KEY 环境变量注入
+  base_url: ""         # 由 AGX_LLM_BASE_URL 环境变量注入
   temperature: 0.7
 
 prompts:
   version: "v4"
 
 chunking:
-  strategy: "recursive"  # recursive | agentic
-  chunk_size: 4000
+  strategy: "recursive"
+  chunk_size: 3000
   chunk_overlap: 200
   max_single_pass_tokens: 3000
   map_concurrency: 4
   max_reduce_rounds: 3
 
 intent:
-  mode: "rule"  # rule | llm | hybrid
+  mode: "rule"
 
 domains:
   default: "email"
@@ -59,7 +59,7 @@ overflow:
 
 judge_llm:
   provider: "litellm"
-  model: "gpt-4o-mini"
+  model: "gpt-5-mini"
   api_key: ""
   base_url: ""
   temperature: 0.0

@@ -148,6 +148,7 @@ def load_config(path: str | Path) -> AppConfig:
     llm_raw = _section(raw, "llm")
     judge_raw = _section(raw, "judge_llm")
     api_key = os.environ.get("AGX_LLM_API_KEY", llm_raw.get("api_key", "") or "")
+    base_url = os.environ.get("AGX_LLM_BASE_URL", llm_raw.get("base_url", "") or "")
     judge_api_key = os.environ.get(
         "AGX_JUDGE_API_KEY",
         judge_raw.get("api_key", "") or api_key,
@@ -159,7 +160,7 @@ def load_config(path: str | Path) -> AppConfig:
 
     return AppConfig(
         server=ServiceSettings(**{**_section(raw, "server")}),
-        llm=LLMSettings(**{**llm_raw, "api_key": api_key}),
+        llm=LLMSettings(**{**llm_raw, "api_key": api_key, "base_url": base_url}),
         prompts=PromptSettings(**{**_section(raw, "prompts")}),
         domains=DomainSettings(**{**_section(raw, "domains")}),
         modality=ModalitySettings(**{**_section(raw, "modality")}),
